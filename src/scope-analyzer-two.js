@@ -8,7 +8,7 @@ import { Scope as OrigScope, ScopeType } from './scope.js';
 
 function assignment(node, compound, binding, init) {
   return {
-    type: 'reference',
+    type: 'assignment',
     node,
     compound,
     binding,
@@ -103,7 +103,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceBlock(node, { statements }) {
     let decls = [];
-    statements.forEach(s => getBlockDecls(s, decls));
+    statements.forEach(s => getBlockDecls(s, false, decls));
     return {
       type: 'block',
       node,
@@ -204,7 +204,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceFunctionBody(node, { directives, statements }) {
     let decls = [];
-    statements.forEach(s => getBlockDecls(s, decls));
+    statements.forEach(s => getBlockDecls(s, true, decls));
 
     return {
       type: 'function body',
@@ -288,7 +288,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceScript(node, { directives, statements }) {
     let decls = [];
-    statements.forEach(s => getBlockDecls(s, decls));
+    statements.forEach(s => getBlockDecls(s, true, decls));
     return {
       type: 'script',
       node,
@@ -378,6 +378,28 @@ function isStrict(node) {
   return node.directives.some(d => d.rawValue === 'use strict');
 }
 
+function getAssignmentTargetIdentifiers(item, out) {
+  switch (item.type) {
+    case 'ati': {
+      out.push(item.node);
+      break;
+    }
+    case 'union': {
+      item.values.forEach(v => {
+        getAssignmentTargetIdentifiers(v, out);
+      });
+      break;
+    }
+    case 'ie': {
+      break;
+    }
+    default: {
+      throw new Error('unimplemented: getAssignmentTargetIdentifiers type ' + item.type);
+    }
+  }
+}
+
+// TODO do this during initial pass probably
 // TODO reconsider out parameter
 function getBindings(item, out) {
   switch (item.type) {
@@ -404,7 +426,7 @@ function getBindings(item, out) {
   }
 }
 
-function getBlockDecls(item, out) {
+function getBlockDecls(item, isTopLevel, out) {
   if (item == null) {
     return;
   }
@@ -427,17 +449,23 @@ function getBlockDecls(item, out) {
       break;
     }
     case 'function declaration': {
-      out.push(new Declaration(item.node.name, DeclarationType.FUNCTION_DECLARATION));
+      if (!isTopLevel) {
+        out.push(new Declaration(item.node.name, DeclarationType.FUNCTION_DECLARATION));
+      }
       break;
     }
-    case 'if': {
-      getBlockDecls(item.consequent, out);
-      getBlockDecls(item.alternate, out);
-      break;
-    }
+    // ifs with function declarations are ugly: you basically have to wrap a block around the body
+    // TODO do that, in the main visitor
+    // case 'if': {
+    //   getBlockDecls(item.consequent, out);
+    //   getBlockDecls(item.alternate, out);
+    //   break;
+    // }
 
     // TODO enumerate cases somewhere probably
     // man, typescript would be nice
+    case 'assignment':
+    case 'if':
     case 'union':
     case 'ie':
     case 'with':
@@ -450,7 +478,7 @@ function getBlockDecls(item, out) {
   }
 }
 
-function getVarDecls(item, strict, forbiddenB33DeclsStack, outVar, outB33) {
+function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, outB33) {
   if (item == null) {
     return;
   }
@@ -470,27 +498,35 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, outVar, outB33) {
     }
     case 'block': {
       forbiddenB33DeclsStack.push(item.decls);
-      item.statements.forEach(s => getVarDecls(s, strict, forbiddenB33DeclsStack, outVar, outB33));
+      item.statements.forEach(s => getVarDecls(s, strict, forbiddenB33DeclsStack, false, outVar, outB33));
       forbiddenB33DeclsStack.pop();
       break;
     }
     case 'function declaration': {
       let name = item.node.name.name;
+      if (isTopLevel) {
+        outB33.push(new Declaration(item.node.name, DeclarationType.FUNCTION_DECLARATION));
+        break;
+      }
       if (strict || forbiddenB33DeclsStack.some(ds => ds.some(d => d.node !== item.node.name && d.node.name === name))) {
-        return;
+        break;
       }
       outB33.push(new Declaration(item.node.name, DeclarationType.FUNCTION_VAR_DECLARATION));
       break;
     }
     case 'if': {
-      getVarDecls(item.consequent, strict, forbiddenB33DeclsStack, outVar, outB33);
-      getVarDecls(item.alternate, strict, forbiddenB33DeclsStack, outVar, outB33);
+      // TODO these need different handling probably
+      getVarDecls(item.consequent, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      getVarDecls(item.alternate, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       break;
     }
     case 'union': {
-      item.values.forEach(v => getVarDecls(v, strict, forbiddenB33DeclsStack, outVar, outB33));
+      // TODO I think we can just return here; `union` should basically only be for like `a + b`;
+      // j/k it's used for switch cases. TODO ensure `switch (x) { case a: function f(){} function g(){} }` is tested.
+      item.values.forEach(v => getVarDecls(v, strict, forbiddenB33DeclsStack, false, outVar, outB33));
       break;
     }
+    case 'assignment':
     case 'ie':
     case 'class declaration': {
       break;
@@ -504,14 +540,13 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, outVar, outB33) {
 // TODO
 class Scope {
   constructor(o) {
+    o.dynamic = o.isDynamic;
     return o;
   }
 }
 
-function synthesize(analysis) {
+function synthesize(summary) {
   let strict = false;
-
-
 
   // map string => [{ scope, variable }]
   let namesInScope = new Map;
@@ -523,7 +558,7 @@ function synthesize(analysis) {
 
     let scope = new Scope({
       type,
-      astNode: null,//node,
+      astNode: node,
       children: [],
       variables,
       isDynamic: false, // TODO
@@ -542,16 +577,21 @@ function synthesize(analysis) {
   function refer(accessibility, node) {
     let name = node.name;
 
+    let ref = new Reference(node, accessibility);
     if (!namesInScope.has(name)) {
       // make a new global
       let variable = new Variable(name, [], []);
       scopeStack[0].variables.push(variable);
       namesInScope.set(name, [{ scope: scopeStack[0], variable }]);
+
+
+      // TODO this is kind of dumb
+      // we consider references to global variables to pass through the global scope
+      scopeStack[0].through.set(name, ref);
     }
 
     let stack = namesInScope.get(name);
     let { scope, variable } = stack[stack.length - 1];
-    let ref = new Reference(node, accessibility);
     variable.references.push(ref);
     for (let i = scopeStack.length - 1; scopeStack[i] !== scope; --i) {
       scopeStack[i].through.set(name, ref);
@@ -594,14 +634,11 @@ function synthesize(analysis) {
 
         let vs = [];
         let b33vs = [];
-        item.statements.forEach(s => getVarDecls(s, strict, [item.decls], vs, b33vs));        
+        item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));        
 
         // TODO b33vs probably doesn't need to be its own array
         // TODO figure out a better way of preventing top-level functions from being B33'd
-        b33vs = b33vs.filter(n => !item.node.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
-
-        // console.log(vs);
-        // console.log(b33vs);
+        // b33vs = b33vs.filter(n => !item.node.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
 
         // top-level lexical declarations in scripts are not globals, so first create the global scope for the var-scoped things
         {
@@ -609,10 +646,10 @@ function synthesize(analysis) {
 
           let scope = new Scope({
             type: ScopeType.GLOBAL,
-            astNode: null,//item.node,
+            astNode: item.node,
             children: [],
             variables,
-            isDynamic: false, // TODO
+            isDynamic: true, // the global scope is always dynamic
             // TODO contemplate `through`
             through: new MultiMap(),
           });
@@ -663,7 +700,7 @@ function synthesize(analysis) {
         break;
       }
       case 'block': {
-        let scope = enterScope(ScopeType.BLOCK, null);
+        let scope = enterScope(ScopeType.BLOCK, item.node);
 
         let declaredInThisScope = declare(scope, item.decls);
 
@@ -679,7 +716,7 @@ function synthesize(analysis) {
         let oldStrict = strict;
         strict = true;
 
-        let scope = enterScope(ScopeType.CLASS_NAME, null);
+        let scope = enterScope(ScopeType.CLASS_NAME, item.node);
 
         declare(scope, [new Declaration(item.node.name, DeclarationType.CLASS_NAME)]);
 
@@ -697,7 +734,7 @@ function synthesize(analysis) {
         strict = strict && isStrict(item.node);
 
         // TODO I guess this should be conditional on there being parameter expressions?
-        let paramScope = enterScope(ScopeType.PARAMETERS, null);
+        let paramScope = enterScope(ScopeType.PARAMETERS, item.node);
 
         // TODO `arguments`??? in parameters?
 
@@ -715,12 +752,12 @@ function synthesize(analysis) {
         let vs = [];
         let b33vs = [];
         // TODO confirm B.3.3 can't conflict with parameters
-        item.body.statements.forEach(s => getVarDecls(s, strict, [params, item.body.decls], vs, b33vs));
+        item.body.statements.forEach(s => getVarDecls(s, strict, [params, item.body.decls], true, vs, b33vs));
         // TODO b33vs probably doesn't need to be its own array
         // TODO figure out a better way of preventing top-level functions from being B33'd
-        b33vs = b33vs.filter(n => !item.node.body.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
+        // b33vs = b33vs.filter(n => !item.node.body.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
 
-        let functionScope = enterScope(ScopeType.FUNCTION, null);
+        let functionScope = enterScope(ScopeType.FUNCTION, item.node);
 
         let declaredInFunctionScope = declare(functionScope, [...item.body.decls, ...vs, ...b33vs]);
 
@@ -758,7 +795,26 @@ function synthesize(analysis) {
         }
         break;
       }
+      case 'ati':
       case 'bi': {
+        break;
+      }
+      case 'assignment': {
+        let bindings = [];
+
+        if (item.node.binding.type === 'AssignmentTargetIdentifier') {
+          let accessibility = item.compound ? Accessibility.READWRITE : Accessibility.WRITE;
+          refer(accessibility, item.node.binding);
+        } else {
+          getAssignmentTargetIdentifiers(item.binding, bindings);
+          bindings.forEach(b => {
+            refer(Accessibility.WRITE, b);
+          });
+        }
+
+        visit(item.binding);
+        visit(item.init);
+
         break;
       }
       case 'ie': {
@@ -781,7 +837,26 @@ function synthesize(analysis) {
     }
   }
 
-  visit(analysis);
+  visit(summary);
+
+  // ugh
+  function visitScope(scope) {
+    let variables = scope.variables;
+    scope.variables = new Map;
+    variables.forEach(v => scope.variables.set(v.name, v));
+
+    scope.variableList = [];
+    for (let x of variables) {
+      scope.variableList.push(x);
+    }
+
+    scope.lookupVariable = name => scope.variables.get(name);
+
+    for (let child of scope.children) {
+      visitScope(child);
+    }
+  }
+  visitScope(scopeStack[0]);
 
   return scopeStack[0];
 }

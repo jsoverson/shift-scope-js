@@ -17,7 +17,11 @@
 import assert from 'assert';
 
 import { parseScript, parseScriptWithLocation, parseModule, parseModuleWithLocation } from 'shift-parser';
-import analyze, { Accessibility, ScopeType, serialize, annotate } from '../';
+import oldAnalyze, { Accessibility, ScopeType, serialize, annotate } from '../';
+
+import ScopeAnalyzer from '../dist/scope-analyzer-two.js';
+
+let analyze = ScopeAnalyzer.analyze;
 
 const NO_REFERENCES = [];
 const NO_DECLARATIONS = [];
