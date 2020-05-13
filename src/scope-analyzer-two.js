@@ -91,7 +91,16 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceBindingPropertyIdentifier(node, { binding, init }) {
     const s = super.reduceBindingPropertyIdentifier(node, { binding, init });
-    if (init) {
+    if (node.init != null) {
+      return parameterExpressions(s);
+    }
+    return s;
+  }
+
+  // TODO this should probably have existed in the original
+  reduceBindingPropertyProperty(node, { name, binding }) {
+    const s = super.reduceBindingPropertyProperty(node, { name, binding });
+    if (node.name.type === 'ComputedPropertyName') {
       return parameterExpressions(s);
     }
     return s;
@@ -183,6 +192,8 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceForStatement(node, { init, test, update, body }) {
+    let decls = [];
+    getBlockDecls(init, false, decls);
     return {
       type: 'for',
       node,
@@ -190,6 +201,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
       test,
       update,
       body,
+      decls,
     };
   }
 
@@ -342,6 +354,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   reduceUpdateExpression(node, { operand }) {
     return {
       type: 'update',
+      node,
       operand,
     };
   }
@@ -401,23 +414,27 @@ function getAssignmentTargetIdentifiers(item, out) {
 
 // TODO do this during initial pass probably
 // TODO reconsider out parameter
+// returns `true` if there are parameter expresisons
 function getBindings(item, out) {
   switch (item.type) {
     case 'union': {
-      item.values.forEach(v => getBindings(v, out));
+      return item.values.some(v => getBindings(v, out));
       break;
     }
     case 'bi': {
       out.push(item.node);
+      return false;
       break;
     }
     case 'param exprs': {
       getBindings(item.wrapped, out);
+      return true;
       break;
     }
     // TODO enumerate cases somewhere probably
     case 'function expression':
     case 'ie': {
+      return false;
       break;
     }
     default: {
@@ -464,7 +481,13 @@ function getBlockDecls(item, isTopLevel, out) {
 
     // TODO enumerate cases somewhere probably
     // man, typescript would be nice
+    case 'arrow':
+    case 'eval':
+    case 'for-in':
+    case 'for-of':
+    case 'for':
     case 'assignment':
+    case 'function expression':
     case 'if':
     case 'union':
     case 'ie':
@@ -526,6 +549,25 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       item.values.forEach(v => getVarDecls(v, strict, forbiddenB33DeclsStack, false, outVar, outB33));
       break;
     }
+    case 'catch':
+    case 'with': {
+      getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      break;
+    }
+    case 'for': {
+      getVarDecls(item.init, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      break;
+    }
+    case 'for-in':
+    case 'for-of': {
+      getVarDecls(item.left, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      break;
+    }
+    case 'arrow':
+    case 'eval':
+    case 'function expression':
     case 'assignment':
     case 'ie':
     case 'class declaration': {
@@ -561,7 +603,7 @@ function synthesize(summary) {
       astNode: node,
       children: [],
       variables,
-      isDynamic: false, // TODO
+      isDynamic: type === ScopeType.WITH, // TODO
       // TODO contemplate `through`
       through: new MultiMap(),
     });
@@ -578,7 +620,8 @@ function synthesize(summary) {
     let name = node.name;
 
     let ref = new Reference(node, accessibility);
-    if (!namesInScope.has(name)) {
+    if (!namesInScope.has(name) || namesInScope.get(name).length === 0) {
+
       // make a new global
       let variable = new Variable(name, [], []);
       scopeStack[0].variables.push(variable);
@@ -599,11 +642,10 @@ function synthesize(summary) {
   }
 
   // TODO declare can just manipulate the top of the scope stack
-  function declare(scope, decls) {
+  function declare(scope, decls, includeArguments = false) {
     // string => variable
     let declaredInThisScope = new Map;
     decls.forEach(d => {
-      // console.log(d);
       let name = d.node.name;
       if (declaredInThisScope.has(name)) {
         declaredInThisScope.get(name).declarations.push(d);
@@ -617,8 +659,81 @@ function synthesize(summary) {
         namesInScope.get(name).push({ scope, variable });
       }
     });
+    if (includeArguments && !declaredInThisScope.has('arguments')) {
+      let variable = new Variable('arguments', [], []);
+      declaredInThisScope.set('arguments', variable);
+      scope.variables.push(variable);
+      if (!namesInScope.has('arguments')) {
+        namesInScope.set('arguments', []);
+      }
+      namesInScope.get('arguments').push({ scope, variable });
+    }
     // todo maybe just return keys
     return declaredInThisScope;
+  }
+
+  function func(node, paramsItem, body) {
+    let oldStrict = strict;
+    strict = strict && isStrict(node);
+
+    let arrow = node.type === 'ArrowExpression';
+
+    let bindings = [];
+    let hasParameterExpressions = paramsItem.items.some(i => getBindings(i, bindings));
+    if (paramsItem.rest != null) {
+      hasParameterExpressions = hasParameterExpressions || getBindings(paramsItem.rest, bindings);
+    }
+
+    let params = bindings.map(b => new Declaration(b, DeclarationType.PARAMETER));
+
+    let paramScope = hasParameterExpressions ? enterScope(ScopeType.PARAMETERS, node) : null;
+
+    let declaredInParamsScope = hasParameterExpressions ? declare(paramScope, params, !arrow) : null;
+
+    if (hasParameterExpressions) {
+      visit(params);
+    }
+
+    let functionScope = enterScope(arrow ? ScopeType.ARROW_FUNCTION : ScopeType.FUNCTION, node);
+
+    let declaredInFunctionScope;
+
+    if (arrow && node.body.type !== 'FunctionBody') {
+      if (hasParameterExpressions) {
+        declaredInFunctionScope = new Map;
+      } else {
+        declaredInFunctionScope = declare(functionScope, params);
+      }
+    } else {
+      let vs = [];
+      // TODO b33vs probably doesn't need to be its own array
+      let b33vs = [];
+
+      // TODO confirm B.3.3 can't conflict with parameters
+      body.statements.forEach(s => getVarDecls(s, strict, [params, body.decls], true, vs, b33vs));
+
+      let bodyDecls = [...body.decls, ...vs, ...b33vs];
+      if (!hasParameterExpressions) {
+        bodyDecls = [...params, ...bodyDecls];
+      }
+      declaredInFunctionScope = declare(functionScope, bodyDecls, !hasParameterExpressions);
+    }
+
+    visit(body);
+
+
+    exitScope();
+    for (let name of declaredInFunctionScope.keys()) {
+      namesInScope.get(name).pop();
+    }
+
+    if (hasParameterExpressions) {
+      exitScope();
+      for (let name of declaredInParamsScope.keys()) {
+        namesInScope.get(name).pop();
+      }
+    }
+    strict = oldStrict;
   }
 
   function visit(item) {
@@ -629,8 +744,6 @@ function synthesize(summary) {
       case 'script': {
         let oldStrict = strict;
         strict = strict && isStrict(item.node);
-
-        // console.log(item.decls);
 
         let vs = [];
         let b33vs = [];
@@ -668,7 +781,7 @@ function synthesize(summary) {
         }
 
         {
-          let scope = enterScope(ScopeType.SCRIPT, null);
+          let scope = enterScope(ScopeType.SCRIPT, item.node);
 
           declare(scope, item.decls);
         }
@@ -730,50 +843,71 @@ function synthesize(summary) {
         break;
       }
       case 'function declaration': {
-        let oldStrict = strict;
-        strict = strict && isStrict(item.node);
+        func(item.node, item.params, item.body);
+        break;
+      }
+      case 'function expression': {
+        if (item.node.name != null) {
+          let scope = enterScope(ScopeType.FUNCTION_NAME, item.node);
 
-        // TODO I guess this should be conditional on there being parameter expressions?
-        let paramScope = enterScope(ScopeType.PARAMETERS, item.node);
+          declare(scope, [new Declaration(item.node.name, DeclarationType.FUNCTION_NAME)]);
 
-        // TODO `arguments`??? in parameters?
+          func(item.node, item.params, item.body);
 
-        let bindings = [];
-        item.params.items.forEach(i => getBindings(i, bindings));
-        if (item.params.rest != null) {
-          getBindings(item.params.rest, bindings);
+          namesInScope.get(item.node.name.name).pop();
+
+          exitScope();
+        } else {
+          func(item.node, item.params, item.body);
         }
-        let params = bindings.map(b => new Declaration(b, DeclarationType.PARAMETER));
-        let declaredInParamsScope = declare(paramScope, params);
-
-        visit(item.params);
-
-        // TODO visit children
-        let vs = [];
-        let b33vs = [];
-        // TODO confirm B.3.3 can't conflict with parameters
-        item.body.statements.forEach(s => getVarDecls(s, strict, [params, item.body.decls], true, vs, b33vs));
-        // TODO b33vs probably doesn't need to be its own array
-        // TODO figure out a better way of preventing top-level functions from being B33'd
-        // b33vs = b33vs.filter(n => !item.node.body.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
-
-        let functionScope = enterScope(ScopeType.FUNCTION, item.node);
-
-        let declaredInFunctionScope = declare(functionScope, [...item.body.decls, ...vs, ...b33vs]);
+        break;
+      }
+      case 'arrow': {
+        func(item.node, item.params, item.body, false);
+        break;
+      }
+      case 'with': {
+        visit(item.object);
+        enterScope(ScopeType.WITH, item.node);
 
         visit(item.body);
 
-
         exitScope();
-        for (let name of declaredInFunctionScope.keys()) {
+        break;        
+      }
+      case 'catch': {
+        let scope = enterScope(ScopeType.CATCH, item.node);
+
+        // TODO move up
+        let bindings = [];
+        getBindings(item.binding, bindings);
+
+        let declaredInThisScope = declare(scope, bindings.map(b => new Declaration(b, DeclarationType.CATCH_PARAMETER)));
+
+        visit(item.binding);
+        visit(item.body);
+
+        for (let name of declaredInThisScope.keys()) {
           namesInScope.get(name).pop();
         }
-
         exitScope();
-        for (let name of declaredInParamsScope.keys()) {
+        break;
+      }
+      case 'for': {
+        let scope = enterScope(ScopeType.BLOCK, item.node);
+
+        let declaredInThisScope = declare(scope, item.decls);
+
+        visit(item.init);
+        visit(item.test);
+        visit(item.update);
+        visit(item.body);
+
+        for (let name of declaredInThisScope.keys()) {
           namesInScope.get(name).pop();
         }
-        strict = oldStrict;
+        exitScope();
+
         break;
       }
       case 'parameters': {
@@ -789,6 +923,7 @@ function synthesize(summary) {
         break;
       }
       case 'if': {
+        visit(item.test);
         visit(item.consequent);
         if (item.alternate != null) {
           visit(item.alternate);
@@ -817,6 +952,14 @@ function synthesize(summary) {
 
         break;
       }
+      case 'update': {
+        if (item.node.operand.type === 'AssignmentTargetIdentifier') {
+          refer(Accessibility.READWRITE, item.node.operand);
+        } else {
+          visit(item.node.operand);
+        }
+        break;
+      }
       case 'ie': {
         // TODO figure out how to avoid duplicating write references for ++/+=
         refer(Accessibility.READ, item.node);
@@ -829,6 +972,12 @@ function synthesize(summary) {
       }
       case 'union': {
         item.values.forEach(visit);
+        break;
+      }
+      case 'eval': {
+        // TODO this is useless / actively harmful
+        scopeStack[scopeStack.length - 1].dynamic = true;
+        visit(item.wrapped);
         break;
       }
       default: {

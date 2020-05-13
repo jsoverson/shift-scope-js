@@ -39,6 +39,10 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     assert(scope.children.indexOf(child) >= 0);
   });
 
+  if ([...scope.through.keys()].length !== through.length) {
+    console.log([...scope.through.keys()])
+    console.log(through)
+  }
   assert.equal([...scope.through.keys()].length, through.length);
   through.forEach(name => {
     let references = scope.through.get(name);
@@ -46,6 +50,10 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     assert(references.some(reference => reference.node.name === name));
   });
 
+  if (scope.variableList.length != variables.size) {
+    console.log(scope.variableList)
+    console.log(variables)
+  }
   assert.equal(scope.variableList.length, variables.size);
   variables.forEach((variableEntryValue, variableEntryKey) => {
     let maybeVariable = scope.lookupVariable(variableEntryKey);
@@ -60,6 +68,10 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     });
 
     let refs = variableEntryValue[1];
+    if (variable.references.length !== refs.length) {
+      console.log(variable.references)
+      console.log( refs)
+    }
     assert.equal(variable.references.length, refs.length);
     refs.forEach(node => {
       assert.notEqual(node, void 0); // todo this is to help with writing tests
