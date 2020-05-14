@@ -205,6 +205,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     };
   }
 
+  // TODO revist having this
   reduceFormalParameters(node, { items, rest }) {
     return {
       type: 'parameters',
@@ -442,6 +443,9 @@ function getBindings(item, out) {
       break;
     }
     // TODO enumerate cases somewhere probably
+    case 'arrow':
+    case 'assignment':
+    case 'delete':
     case 'function expression':
     case 'ie': {
       return false;
@@ -739,9 +743,12 @@ function synthesize(summary) {
     let arrow = node.type === 'ArrowExpression';
 
     let bindings = [];
-    let hasParameterExpressions = paramsItem.items.some(i => getBindings(i, bindings));
+    let paramExprs = paramsItem.items.map(i => getBindings(i, bindings))
+    let hasParameterExpressions = paramExprs.some(b => b);
+    let restHasParamExprs = false;
     if (paramsItem.rest != null) {
-      hasParameterExpressions = hasParameterExpressions || getBindings(paramsItem.rest, bindings);
+      restHasParamExprs = getBindings(paramsItem.rest, bindings);
+      hasParameterExpressions = hasParameterExpressions || restHasParamExprs;
     }
 
     let params = bindings.map(b => new Declaration(b, DeclarationType.PARAMETER));
@@ -751,7 +758,26 @@ function synthesize(summary) {
     let declaredInParamsScope = hasParameterExpressions ? declare(paramScope, params, !arrow) : null;
 
     if (hasParameterExpressions) {
-      visit(paramsItem);
+      for (let i = 0; i < node.params.items.length; ++i) {
+        if (paramExprs[i]) {
+          // each parameter with expressions gets its own scope
+          // fortunately they have no declarations
+          enterScope(ScopeType.PARAMETER_EXPRESSION, node.params.items[i]);
+          visit(paramsItem.items[i]);
+          exitScope();
+        } else {
+          visit(paramsItem.items[i]);
+        }
+      }
+      if (node.params.rest != null) {
+        if (restHasParamExprs) {
+          enterScope(ScopeType.PARAMETER_EXPRESSION, node.params.rest);
+          visit(paramsItem.rest);
+          exitScope();
+        } else {
+          visit(paramsItem.rest);
+        }
+      }
     }
 
     let functionScope = enterScope(arrow ? ScopeType.ARROW_FUNCTION : ScopeType.FUNCTION, node);
