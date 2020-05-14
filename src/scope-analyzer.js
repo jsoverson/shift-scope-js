@@ -309,11 +309,10 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceVariableDeclarator(node, { binding, init }) {
-    const s = super.reduceVariableDeclarator(node, { binding, init });
     if (init) {
-      return s.addReferences(Accessibility.WRITE, true);
+      binding = binding.addReferences(Accessibility.WRITE, true);
     }
-    return s;
+    return super.reduceVariableDeclarator(node, { binding, init });
   }
 
   reduceWithStatement(node, { object, body }) {
