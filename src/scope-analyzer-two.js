@@ -581,7 +581,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
         outVar.push(new Declaration(item.node.name, DeclarationType.FUNCTION_DECLARATION));
         break;
       }
-      if (strict || forbiddenB33DeclsStack.some(ds => ds.some(d => d.node !== item.node.name && d.node.name === name))) {
+      if (strict || item.node.isGenerator || item.node.isAsync || forbiddenB33DeclsStack.some(ds => ds.some(d => d.node !== item.node.name && d.node.name === name))) {
         break;
       }
       outB33.push(new Declaration(item.node.name, DeclarationType.FUNCTION_VAR_DECLARATION));

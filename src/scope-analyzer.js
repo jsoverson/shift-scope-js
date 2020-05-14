@@ -22,8 +22,12 @@ import { DeclarationType } from './declaration';
 import { ScopeType } from './scope';
 import StrictnessReducer from './strictness-reducer';
 
+function isSimpleFunctionDeclaration(statement) {
+  return statement.type === 'FunctionDeclaration' && !statement.isGenerator && !statement.isAsync;
+}
+
 function getFunctionDeclarations(statements) {
-  return statements.filter(s => s.type === 'FunctionDeclaration').map(f => f.name);
+  return statements.filter(isSimpleFunctionDeclaration).map(f => f.name);
 }
 
 export default class ScopeAnalyzer extends MonoidalReducer {
@@ -214,11 +218,11 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceIfStatement(node, { test, consequent, alternate }) {
     // These "blocks" are synthetic; see https://tc39.es/ecma262/#sec-functiondeclarations-in-ifstatement-statement-clauses
-    if (node.consequent.type === 'FunctionDeclaration') {
+    if (isSimpleFunctionDeclaration(node.consequent)) {
       consequent = consequent.withPotentialVarFunctions([node.consequent.name])
         .finish(node.consequent, ScopeType.BLOCK);
     }
-    if (node.alternate && node.alternate.type === 'FunctionDeclaration') {
+    if (node.alternate != null && isSimpleFunctionDeclaration(node.alternate)) {
       alternate = alternate.withPotentialVarFunctions([node.alternate.name])
         .finish(node.alternate, ScopeType.BLOCK);
     }
@@ -257,14 +261,14 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     return this
       .fold(cases)
       .finish(node, ScopeType.BLOCK)
-      .withPotentialVarFunctions(getFunctionDeclarations([...node.cases.map(c => c.consequent)]))
+      .withPotentialVarFunctions(getFunctionDeclarations([].concat(...node.cases.map(c => c.consequent))))
       .concat(discriminant);
   }
 
   reduceSwitchStatementWithDefault(node, { discriminant, preDefaultCases, defaultCase, postDefaultCases }) {
-    const functionDeclarations = getFunctionDeclarations([
+    const functionDeclarations = getFunctionDeclarations([].concat(
       ...node.preDefaultCases.concat([node.defaultCase], node.postDefaultCases).map(c => c.consequent),
-    ]);
+    ));
     const cases = preDefaultCases.concat([defaultCase], postDefaultCases);
     return this
       .fold(cases)
