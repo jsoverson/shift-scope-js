@@ -258,7 +258,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceSetter(node, { name, param, body }) {
     if (param.hasParameterExpressions) {
-      param = param.finish(node, ScopeType.PARAMETER_EXPRESSION);
+      param = param.finish(node.param, ScopeType.PARAMETER_EXPRESSION);
     }
     return name.concat(
       this.finishFunction(node, param.addDeclarations(DeclarationType.PARAMETER), body),
