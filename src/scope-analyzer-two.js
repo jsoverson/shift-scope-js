@@ -734,6 +734,21 @@ function synthesize(summary) {
     }
   }
 
+  function declareOne(decl) {
+    let name = decl.node.name;
+    if (scope.variableMap.has(name)) {
+      scope.variableMap.get(name).declarations.push(decl);
+    } else {
+      let variable = new Variable(name, [], [d]);
+      scope.variables.push(variable);
+      scope.variableMap.set(name, variable);
+      if (!namesInScope.has(name)) {
+        namesInScope.set(name, []);
+      }
+      namesInScope.get(name).push({ scope, variable });
+    }
+  }
+
 
   function func(node, paramsItem, body) {
     let oldStrict = strict;
@@ -782,7 +797,7 @@ function synthesize(summary) {
 
     if (arrow && node.body.type !== 'FunctionBody') {
       if (!hasParameterExpressions) {
-        declare(params);
+        params.forEach(declareOne);
       }
     } else {
       let vs = [];
@@ -837,7 +852,7 @@ function synthesize(summary) {
           let b33vs = [];
           item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));        
 
-          declare(vs.concat(b33vs));
+          vs.concat(b33vs).forEach(declareOne);
         }
 
         {
