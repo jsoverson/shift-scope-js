@@ -181,6 +181,9 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceFormalParameters(node, { items, rest }) {
+    if (rest && rest.hasParameterExpressions) {
+      rest = rest.finish(node.rest, ScopeType.PARAMETER_EXPRESSION);
+    }
     let s = rest ? rest : new ScopeState;
     items.forEach((item, ind) => {
       s = s.concat(
