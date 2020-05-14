@@ -82,7 +82,6 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     return s;
   }
 
-  // TODO this should probably have existed in the original
   reduceBindingPropertyProperty(node, { name, binding }) {
     const s = super.reduceBindingPropertyProperty(node, { name, binding });
     if (node.name.type === 'ComputedPropertyName') {
@@ -163,22 +162,28 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceForInStatement(node, { left, right, body }) {
+    let decls = [];
+    getBlockDecls(left, false, decls);
     return {
-      type: 'for-in',
+      type: 'for-in/of',
       node,
       left,
       right,
       body,
+      decls,
     };
   }
 
   reduceForOfStatement(node, { left, right, body }) {
+    let decls = [];
+    getBlockDecls(left, false, decls);
     return {
-      type: 'for-of',
+      type: 'for-in/of',
       node,
       left,
       right,
       body,
+      decls,
     };
   }
 
@@ -196,7 +201,6 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     };
   }
 
-  // TODO revist having this
   reduceFormalParameters(node, { items, rest }) {
     return {
       type: 'parameters',
@@ -208,7 +212,6 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   reduceFunctionBody(node, { directives, statements }) {
     let decls = [];
     statements.forEach(s => getBlockDecls(s, true, decls));
-
     return {
       type: 'function body',
       node,
@@ -412,6 +415,7 @@ function getAssignmentTargetIdentifiers(item, out) {
       });
       break;
     }
+    case 'variable declaration':
     case 'ie': {
       break;
     }
@@ -501,6 +505,10 @@ function getBlockDecls(item, isTopLevel, out) {
       item.values.forEach(v => getBlockDecls(v, false, out));
       break;
     }
+    case 'param exprs': {
+      getBlockDecls(item.wrapped, false, out);
+      break;
+    }
 
     // TODO enumerate cases somewhere probably
     // man, typescript would be nice
@@ -508,8 +516,7 @@ function getBlockDecls(item, isTopLevel, out) {
     case 'switch':
     case 'arrow':
     case 'eval':
-    case 'for-in':
-    case 'for-of':
+    case 'for-in/of':
     case 'for':
     case 'assignment':
     case 'delete':
@@ -518,6 +525,7 @@ function getBlockDecls(item, isTopLevel, out) {
     case 'function expression':
     case 'if':
     case 'ie':
+    case 'ati':
     case 'with':
     case 'block': {
       break;
@@ -605,8 +613,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       break;
     }
-    case 'for-in':
-    case 'for-of': {
+    case 'for-in/of': {
       getVarDecls(item.left, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       break;
@@ -615,6 +622,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       item.cases.forEach(c => getVarDecls(c, strict, forbiddenB33DeclsStack, false, outVar, outB33));
       break;
     }
+    case 'param exprs':
     case 'import':
     case 'arrow':
     case 'eval':
@@ -623,6 +631,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
     case 'class expression':
     case 'delete':
     case 'assignment':
+    case 'ati':
     case 'ie':
     case 'class declaration': {
       break;
@@ -656,7 +665,7 @@ function synthesize(summary) {
       astNode: node,
       children: [],
       variables: [],
-      isDynamic: type === ScopeType.WITH, // TODO
+      isDynamic: type === ScopeType.WITH,
       through: new MultiMap(),
     });
     scopeStack[scopeStack.length - 1].children.push(scope);
@@ -972,6 +981,31 @@ function synthesize(summary) {
         visit(item.init);
         visit(item.test);
         visit(item.update);
+        visit(item.body);
+
+        exitScope();
+
+        break;
+      }
+      case 'for-in/of': {
+        enterScope(ScopeType.BLOCK, item.node);
+
+        item.decls.forEach(declare);
+
+        // TODO be less dumb about this
+        // ideally do it earlier
+        let bindings = [];
+        if (item.left.type === 'variable declaration') {
+          item.left.declarators.forEach(d => getBindings(d.binding, bindings));
+        } else {
+          getAssignmentTargetIdentifiers(item.left, bindings);
+        }
+        bindings.forEach(b => {
+          refer(Accessibility.WRITE, b);
+        });
+
+        visit(item.left);
+        visit(item.right);
         visit(item.body);
 
         exitScope();

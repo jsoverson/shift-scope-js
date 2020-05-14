@@ -1961,6 +1961,49 @@ suite('unit', () => {
     );
   });
 
+  test('for in/of', () => {
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (a/* writes a#0 */ in a/* reads a#0 */) a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (a/* writes a#0 */ of a/* reads a#0 */) a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (var a/* declares a#0; writes a#0 */ in a/* reads a#0 */) a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (var a/* declares a#0; writes a#0 */ of a/* reads a#0 */) a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (let a/* declares a#1; writes a#1 */ in a/* reads a#1 */) a/* reads a#1 */;
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */;
+      for (let a/* declares a#1; writes a#1 */ of a/* reads a#1 */) a/* reads a#1 */;
+      `,
+      { skipUnambiguous: false }
+    );
+  });
 
   test('delete', () => {
     checkScopeAnnotation(`
