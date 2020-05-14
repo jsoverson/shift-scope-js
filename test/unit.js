@@ -2005,6 +2005,44 @@ suite('unit', () => {
     );
   });
 
+  test.only('compound assigment', () => {
+    checkScopeAnnotation(`
+      a/* reads a#0; writes a#0 */ += a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false },
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */.b += a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false },
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */[a/* reads a#0 */] += a/* reads a#0 */;
+      `,
+      { skipUnambiguous: false },
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0; writes a#0 */++;
+      `,
+      { skipUnambiguous: false },
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */.b++;
+      `,
+      { skipUnambiguous: false },
+    );
+
+    checkScopeAnnotation(`
+      a/* reads a#0 */[a/* reads a#0 */]++;
+      `,
+      { skipUnambiguous: false },
+    );
+  });
+
   test('delete', () => {
     checkScopeAnnotation(`
       delete x/* deletes x#0 */;

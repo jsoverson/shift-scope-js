@@ -149,7 +149,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     return {
       type: 'assignment',
       node,
-      compound: false,
+      compound: true,
       binding,
       init: expression,
     }
@@ -961,10 +961,6 @@ function synthesize(summary) {
       }
       // TODO methods, getters, setters don't need their own type I guess
       case 'method': {
-        if (item.params == null) {
-          console.log(item.node);
-          process.exit(0);
-        }
         let paramNodes = item.node.type === 'Method'
           ? item.node.params
           : item.node.type === 'Setter'
