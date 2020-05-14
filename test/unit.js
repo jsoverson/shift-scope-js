@@ -39,10 +39,6 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     assert(scope.children.indexOf(child) >= 0);
   });
 
-  if ([...scope.through.keys()].length !== through.length) {
-    console.log([...scope.through.keys()])
-    console.log(through)
-  }
   assert.equal([...scope.through.keys()].length, through.length);
   through.forEach(name => {
     let references = scope.through.get(name);
@@ -50,10 +46,6 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     assert(references.some(reference => reference.node.name === name));
   });
 
-  if (scope.variableList.length != variables.size) {
-    console.log(scope.variableList)
-    console.log(variables)
-  }
   assert.equal(scope.variableList.length, variables.size);
   variables.forEach((variableEntryValue, variableEntryKey) => {
     let maybeVariable = scope.lookupVariable(variableEntryKey);
@@ -68,10 +60,6 @@ function checkScope(scope, scopeNode, scopeType, isDynamic, children, through, v
     });
 
     let refs = variableEntryValue[1];
-    if (variable.references.length !== refs.length) {
-      console.log(variable.references)
-      console.log( refs)
-    }
     assert.equal(variable.references.length, refs.length);
     refs.forEach(node => {
       assert.notEqual(node, void 0); // todo this is to help with writing tests
@@ -1724,7 +1712,7 @@ suite('unit', () => {
 
   test('parameter scope', () => {
     checkScopeAnnotation(`/* Scope (Global) *//* Scope (Script) */
-      !/* Scope (Function) declaring x#0, y#0, arguments#0 */function (x/* declares x#0 */) {
+      !/* Scope (Function) declaring arguments#0, x#0, y#0 */function (x/* declares x#0 */) {
         let y/* declares y#0 */;
       }/* end scope */;
       /* end scope *//* end scope */`,
@@ -1733,7 +1721,7 @@ suite('unit', () => {
 
     // Note the Parameters and ParametersExpression scopes
     checkScopeAnnotation(`/* Scope (Global) *//* Scope (Script) */
-      !/* Scope (Parameters) declaring x#0, arguments#0 *//* Scope (Function) declaring y#0 */function(/* Scope (ParameterExpression) */x/* declares x#0 */ = 1/* end scope */) {
+      !/* Scope (Parameters) declaring arguments#0, x#0 *//* Scope (Function) declaring y#0 */function(/* Scope (ParameterExpression) */x/* declares x#0 */ = 1/* end scope */) {
         let y/* declares y#0 */;
       }/* end scope *//* end scope */;
       /* end scope *//* end scope */`,
@@ -1741,7 +1729,7 @@ suite('unit', () => {
     );
 
     checkScopeAnnotation(`/* Scope (Global) declaring z#0 *//* Scope (Script) */
-      !/* Scope (Parameters) declaring x#0, y#0, arguments#0 *//* Scope (Function) declaring z#1 */function(x/* declares x#0 */, /* Scope (ParameterExpression) */y/* declares y#0 */ = /* Scope (ArrowFunction) */() => (x/* reads x#0 */, y/* reads y#0 */, z/* reads z#0 */)/* end scope *//* end scope */) {
+      !/* Scope (Parameters) declaring arguments#0, x#0, y#0 *//* Scope (Function) declaring z#1 */function(x/* declares x#0 */, /* Scope (ParameterExpression) */y/* declares y#0 */ = /* Scope (ArrowFunction) */() => (x/* reads x#0 */, y/* reads y#0 */, z/* reads z#0 */)/* end scope *//* end scope */) {
         let z/* declares z#1 */;
       }/* end scope *//* end scope */;
       /* end scope *//* end scope */`,
