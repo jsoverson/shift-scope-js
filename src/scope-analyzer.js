@@ -51,14 +51,13 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   finishFunction(fnNode, params, body) {
     const isArrowFn = fnNode.type === 'ArrowExpression';
     const fnType = isArrowFn ? ScopeType.ARROW_FUNCTION : ScopeType.FUNCTION;
-    const opts = { shouldResolveArguments: !isArrowFn, shouldB33: this.sloppySet.has(fnNode) };
     if (params.hasParameterExpressions) {
       return params
         .withoutParameterExpressions()
-        .concat(body.finish(fnNode, fnType, { isFunctionWithParameterExpressions: true }))
-        .finish(fnNode, ScopeType.PARAMETERS, opts);
+        .concat(body.finish(fnNode, fnType, { shouldResolveArguments: false, paramsToBlockB33Hoisting: params, shouldB33: this.sloppySet.has(fnNode) }))
+        .finish(fnNode, ScopeType.PARAMETERS, { shouldResolveArguments: !isArrowFn });
     }
-    return params.concat(body).finish(fnNode, fnType, opts);
+    return params.concat(body).finish(fnNode, fnType, { shouldResolveArguments: !isArrowFn, shouldB33: this.sloppySet.has(fnNode) });
   }
 
   reduceArrowExpression(node, { params, body }) {
@@ -264,12 +263,11 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceSwitchStatement(node, { discriminant, cases }) {
-    return discriminant.concat(
-      this
-        .fold(cases)
-        .finish(node, ScopeType.BLOCK)
-        .withPotentialVarFunctions(getFunctionDeclarations([].concat(...node.cases.map(c => c.consequent))))
-     );
+    return this
+      .fold(cases)
+      .finish(node, ScopeType.BLOCK)
+      .withPotentialVarFunctions(getFunctionDeclarations([].concat(...node.cases.map(c => c.consequent))))
+      .concat(discriminant);
   }
 
   reduceSwitchStatementWithDefault(node, { discriminant, preDefaultCases, defaultCase, postDefaultCases }) {
@@ -277,12 +275,11 @@ export default class ScopeAnalyzer extends MonoidalReducer {
       ...node.preDefaultCases.concat([node.defaultCase], node.postDefaultCases).map(c => c.consequent),
     ));
     const cases = preDefaultCases.concat([defaultCase], postDefaultCases);
-    return discriminant.concat(
-      this
-        .fold(cases)
-        .finish(node, ScopeType.BLOCK)
-        .withPotentialVarFunctions(functionDeclarations)
-    );
+    return this
+      .fold(cases)
+      .finish(node, ScopeType.BLOCK)
+      .withPotentialVarFunctions(functionDeclarations)
+      .concat(discriminant);
   }
 
   reduceUnaryExpression(node, { operand }) {
@@ -309,10 +306,11 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceVariableDeclarator(node, { binding, init }) {
+    const s = super.reduceVariableDeclarator(node, { binding, init });
     if (init) {
-      binding = binding.addReferences(Accessibility.WRITE, true);
+      return s.addReferences(Accessibility.WRITE, true);
     }
-    return super.reduceVariableDeclarator(node, { binding, init });
+    return s;
   }
 
   reduceWithStatement(node, { object, body }) {
