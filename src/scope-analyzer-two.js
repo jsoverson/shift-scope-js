@@ -422,6 +422,8 @@ function getAssignmentTargetIdentifiers(item, out) {
       getAssignmentTargetIdentifiers(item.wrapped, out);
       break;
     }
+    case 'arrow':
+    case 'update':
     case 'function expression':
     case 'variable declaration':
     case 'ie': {
@@ -442,7 +444,7 @@ function getBindings(item, out) {
   }
   switch (item.type) {
     case 'union': {
-      return item.values.some(v => getBindings(v, out));
+      return item.values.map(v => getBindings(v, out)).some(e => e);
       break;
     }
     case 'bi': {
