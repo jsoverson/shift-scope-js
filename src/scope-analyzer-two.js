@@ -799,7 +799,9 @@ function synthesize(summary) {
       }
     } else {
       if (!hasParameterExpressions) {
-        declare(null);
+        if (!arrow) {
+          declare(null);
+        }
         params.forEach(declare);
       }
 
@@ -963,7 +965,7 @@ function synthesize(summary) {
         break;
       }
       case 'arrow': {
-        func(item.node, item.node.params, item.params, item.body, false);
+        func(item.node, item.node.params, item.params, item.body);
         break;
       }
       // TODO methods, getters, setters don't need their own type I guess
@@ -973,7 +975,7 @@ function synthesize(summary) {
           : item.node.type === 'Setter'
             ? { items: [item.node.param], rest: null }
             : { items: [], rest: null };
-        func(item.node, paramNodes, item.params, item.body, true);
+        func(item.node, paramNodes, item.params, item.body);
         break;
       }
       case 'with': {
