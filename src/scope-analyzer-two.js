@@ -632,13 +632,17 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       break;
     }
     case 'for': {
+      forbiddenB33DeclsStack.push(item.decls);
       getVarDecls(item.init, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      forbiddenB33DeclsStack.pop();
       break;
     }
     case 'for-in/of': {
+      forbiddenB33DeclsStack.push(item.decls);
       getVarDecls(item.left, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      forbiddenB33DeclsStack.pop();
       break;
     }
     case 'switch': {

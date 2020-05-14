@@ -1918,6 +1918,26 @@ suite('unit', () => {
       `
     );
 
+    checkScopeAnnotation(`
+      for (let a/* declares a#0 */; ; ) {
+        function a/* declares a#1 */() {}
+      }
+      `
+    );
+
+    checkScopeAnnotation(`
+      for (let a/* declares a#0; writes a#0 */ in 0) {
+        function a/* declares a#1 */() {}
+      }
+      `
+    );
+
+    checkScopeAnnotation(`
+      for (let a/* declares a#0; writes a#0 */ of 0) {
+        function a/* declares a#1 */() {}
+      }
+      `
+    );
 
     checkScopeAnnotation(`
       {
