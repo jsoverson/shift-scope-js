@@ -426,6 +426,7 @@ function getAssignmentTargetIdentifiers(item, out) {
     case 'arrow':
     case 'method':
     case 'update':
+    case 'delete':
     case 'class expression':
     case 'function expression':
     case 'variable declaration':
@@ -463,6 +464,7 @@ function getBindings(item, out) {
     // TODO enumerate cases somewhere probably
     case 'arrow':
     case 'assignment':
+    case 'method':
     case 'update':
     case 'delete':
     case 'class expression':
