@@ -265,6 +265,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   reduceIfStatement(node, { test, consequent, alternate }) {
     return {
       type: 'if',
+      node,
       test,
       consequent,
       alternate,
@@ -584,7 +585,24 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       item.values.forEach(v => getVarDecls(v, strict, forbiddenB33DeclsStack, false, outVar, outB33));
       break;
     }
-    case 'catch':
+    case 'catch': {
+      let complexBinding = item.node.binding.type !== 'BindingIdentifier';
+      if (complexBinding) {
+        // trivial catch bindings don't block B33 hoisting, but non-trivial ones do
+        // see https://tc39.es/ecma262/#sec-variablestatements-in-catch-blocks
+
+        // TODO move up
+        let bindings = [];
+        getBindings(item.binding, bindings);
+
+        forbiddenB33DeclsStack.push(bindings.map(b => new Declaration(b, DeclarationType.CATCH)));
+      }
+      getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
+      if (complexBinding) {
+        forbiddenB33DeclsStack.pop();
+      }
+      break;
+    }
     case 'with': {
       getVarDecls(item.body, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       break;
@@ -733,7 +751,7 @@ function synthesize(summary) {
     let declaredInParamsScope = hasParameterExpressions ? declare(paramScope, params, !arrow) : null;
 
     if (hasParameterExpressions) {
-      visit(params);
+      visit(paramsItem);
     }
 
     let functionScope = enterScope(arrow ? ScopeType.ARROW_FUNCTION : ScopeType.FUNCTION, node);
@@ -1008,6 +1026,39 @@ function synthesize(summary) {
 
         break;
       }
+      case 'if': {
+        visit(item.test);
+        // These "blocks" are synthetic; see https://tc39.es/ecma262/#sec-functiondeclarations-in-ifstatement-statement-clauses
+        if (item.node.consequent.type === 'FunctionDeclaration') {
+          let scope = enterScope(ScopeType.BLOCK, item.node.consequent);
+          let declaredInThisScope = declare(scope, [new Declaration(item.node.consequent.name, DeclarationType.FUNCTION_DECLARATION)]);
+
+          visit(item.consequent);
+
+          for (let name of declaredInThisScope.keys()) {
+            namesInScope.get(name).pop();
+          }
+          exitScope();
+        } else {
+          visit(item.consequent);
+        }
+        if (item.alternate != null) {
+          if (item.node.alternate.type === 'FunctionDeclaration') {
+            let scope = enterScope(ScopeType.BLOCK, item.node.alternate);
+            let declaredInThisScope = declare(scope, [new Declaration(item.node.alternate.name, DeclarationType.FUNCTION_DECLARATION)]);
+
+            visit(item.alternate);
+
+            for (let name of declaredInThisScope.keys()) {
+              namesInScope.get(name).pop();
+            }
+            exitScope();
+          } else {
+            visit(item.alternate);
+          }
+        }
+        break;
+      }
       case 'parameters': {
         item.items.forEach(visit);
         if (item.rest != null) {
@@ -1018,14 +1069,6 @@ function synthesize(summary) {
       // TODO revisit having function body represented
       case 'function body': {
         item.statements.forEach(visit);
-        break;
-      }
-      case 'if': {
-        visit(item.test);
-        visit(item.consequent);
-        if (item.alternate != null) {
-          visit(item.alternate);
-        }
         break;
       }
       case 'assignment': {
