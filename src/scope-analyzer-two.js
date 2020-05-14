@@ -504,15 +504,6 @@ function getBlockDecls(item, isTopLevel, out) {
       break;
     }
 
-
-    // ifs with function declarations are ugly: you basically have to wrap a block around the body
-    // TODO do that, in the main visitor
-    // case 'if': {
-    //   getBlockDecls(item.consequent, out);
-    //   getBlockDecls(item.alternate, out);
-    //   break;
-    // }
-
     // TODO enumerate cases somewhere probably
     // man, typescript would be nice
     case 'catch':
@@ -578,7 +569,6 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       break;
     }
     case 'if': {
-      // TODO these need different handling probably
       getVarDecls(item.consequent, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       getVarDecls(item.alternate, strict, forbiddenB33DeclsStack, false, outVar, outB33);
       break;
@@ -667,7 +657,6 @@ function synthesize(summary) {
       children: [],
       variables: [],
       isDynamic: type === ScopeType.WITH, // TODO
-      // TODO contemplate `through`
       through: new MultiMap(),
     });
     scopeStack[scopeStack.length - 1].children.push(scope);
@@ -693,8 +682,7 @@ function synthesize(summary) {
       scopeStack[0].variableMap.set(name, variable);
       namesInScope.set(name, [{ scope: scopeStack[0], variable }]);
 
-      // TODO this is kind of dumb
-      // we consider references to global variables to pass through the global scope
+      // we consider references to undeclared global variables to pass through the global scope
       scopeStack[0].through.set(name, ref);
     }
 
@@ -706,8 +694,8 @@ function synthesize(summary) {
     }
   }
 
-  // null = 'arguments'
-  function declareOne(decl) {
+  // you can declare 'arguments' by invoking this with `null`
+  function declare(decl) {
     let scope = scopeStack[scopeStack.length - 1];
     let name = decl == null ? 'arguments' : decl.node.name;
     if (scope.variableMap.has(name)) {
@@ -724,7 +712,6 @@ function synthesize(summary) {
       namesInScope.get(name).push({ scope, variable });
     }
   }
-
 
   function func(node, paramsItem, body) {
     let oldStrict = strict;
@@ -747,9 +734,9 @@ function synthesize(summary) {
 
     if (hasParameterExpressions) {
       if (!arrow) {
-        declareOne(null);
+        declare(null);
       }
-      params.forEach(declareOne);
+      params.forEach(declare);
       for (let i = 0; i < node.params.items.length; ++i) {
         if (paramExprs[i]) {
           // each parameter with expressions gets its own scope
@@ -776,12 +763,12 @@ function synthesize(summary) {
 
     if (arrow && node.body.type !== 'FunctionBody') {
       if (!hasParameterExpressions) {
-        params.forEach(declareOne);
+        params.forEach(declare);
       }
     } else {
       if (!hasParameterExpressions) {
-        declareOne(null);
-        params.forEach(declareOne);
+        declare(null);
+        params.forEach(declare);
       }
 
       let vs = [];
@@ -790,9 +777,9 @@ function synthesize(summary) {
 
       body.statements.forEach(s => getVarDecls(s, strict, [params, body.decls], true, vs, b33vs));
 
-      body.decls.forEach(declareOne);
-      vs.forEach(declareOne);
-      b33vs.forEach(declareOne);
+      body.decls.forEach(declare);
+      vs.forEach(declare);
+      b33vs.forEach(declare);
     }
 
     visit(body);
@@ -817,30 +804,27 @@ function synthesize(summary) {
         // TODO b33vs probably doesn't need to be its own array
 
         // top-level lexical declarations in scripts are not globals, so first create the global scope for the var-scoped things
-        {
-          let scope = new Scope({
-            type: ScopeType.GLOBAL,
-            astNode: item.node,
-            children: [],
-            variables: [],
-            isDynamic: true, // the global scope is always dynamic
-            // TODO contemplate `through`
-            through: new MultiMap(),
-          });
-          scopeStack.push(scope);
+        let scope = new Scope({
+          type: ScopeType.GLOBAL,
+          astNode: item.node,
+          children: [],
+          variables: [],
+          isDynamic: true, // the global scope is always dynamic
+          // TODO contemplate `through`
+          through: new MultiMap(),
+        });
+        scopeStack.push(scope);
 
-          let vs = [];
-          let b33vs = [];
-          item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));        
+        let vs = [];
+        let b33vs = [];
+        item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));
 
-          vs.concat(b33vs).forEach(declareOne);
-        }
+        vs.forEach(declare);
+        b33vs.forEach(declare);
 
-        {
-          enterScope(ScopeType.SCRIPT, item.node);
+        enterScope(ScopeType.SCRIPT, item.node);
 
-          item.decls.forEach(declareOne);
-        }
+        item.decls.forEach(declare);
 
         item.statements.forEach(visit);
 
@@ -867,9 +851,8 @@ function synthesize(summary) {
         let vs = [];
         item.items.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, []));
 
-        // TODO clean this up
-        let decls = [...item.decls, ...vs];
-        decls.forEach(declareOne);
+        item.decls.forEach(declare);
+        vs.forEach(declare);
 
         item.items.forEach(visit);
 
@@ -898,7 +881,7 @@ function synthesize(summary) {
       case 'block': {
         enterScope(ScopeType.BLOCK, item.node);
 
-        item.decls.forEach(declareOne);
+        item.decls.forEach(declare);
 
         item.statements.forEach(visit);
 
@@ -918,7 +901,7 @@ function synthesize(summary) {
             : item.node.name.name !== '*default*';
 
         if (hasName) {
-          declareOne(new Declaration(item.node.name, DeclarationType.CLASS_NAME));
+          declare(new Declaration(item.node.name, DeclarationType.CLASS_NAME));
         }
 
         visit(item.super);
@@ -937,7 +920,7 @@ function synthesize(summary) {
         if (item.node.name != null) {
           enterScope(ScopeType.FUNCTION_NAME, item.node);
 
-          declareOne(new Declaration(item.node.name, DeclarationType.FUNCTION_NAME));
+          declare(new Declaration(item.node.name, DeclarationType.FUNCTION_NAME));
 
           func(item.node, item.params, item.body);
 
@@ -973,7 +956,7 @@ function synthesize(summary) {
         getBindings(item.binding, bindings);
 
         // todo not map + foreach
-        bindings.map(b => new Declaration(b, DeclarationType.CATCH_PARAMETER)).forEach(declareOne);
+        bindings.map(b => new Declaration(b, DeclarationType.CATCH_PARAMETER)).forEach(declare);
 
         visit(item.binding);
         visit(item.body);
@@ -984,7 +967,7 @@ function synthesize(summary) {
       case 'for': {
         enterScope(ScopeType.BLOCK, item.node);
 
-        item.decls.forEach(declareOne);
+        item.decls.forEach(declare);
 
         visit(item.init);
         visit(item.test);
@@ -999,7 +982,7 @@ function synthesize(summary) {
         visit(item.discriminant);
 
         enterScope(ScopeType.BLOCK, item.node);
-        item.decls.forEach(declareOne);
+        item.decls.forEach(declare);
 
         item.cases.forEach(visit);
 
@@ -1012,7 +995,7 @@ function synthesize(summary) {
         // These "blocks" are synthetic; see https://tc39.es/ecma262/#sec-functiondeclarations-in-ifstatement-statement-clauses
         if (item.node.consequent.type === 'FunctionDeclaration') {
           enterScope(ScopeType.BLOCK, item.node.consequent);
-          declareOne(new Declaration(item.node.consequent.name, DeclarationType.FUNCTION_DECLARATION));
+          declare(new Declaration(item.node.consequent.name, DeclarationType.FUNCTION_DECLARATION));
 
           visit(item.consequent);
 
@@ -1023,7 +1006,7 @@ function synthesize(summary) {
         if (item.alternate != null) {
           if (item.node.alternate.type === 'FunctionDeclaration') {
             enterScope(ScopeType.BLOCK, item.node.alternate);
-            declareOne(new Declaration(item.node.alternate.name, DeclarationType.FUNCTION_DECLARATION));
+            declare(new Declaration(item.node.alternate.name, DeclarationType.FUNCTION_DECLARATION));
 
             visit(item.alternate);
 
