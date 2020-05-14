@@ -6,36 +6,10 @@ import { Accessibility, Reference } from './reference.js';
 import Variable from './variable.js';
 import { Scope as OrigScope, ScopeType } from './scope.js';
 
-function assignment(node, compound, binding, init) {
-  return {
-    type: 'assignment',
-    node,
-    compound,
-    binding,
-    init,
-  };
-}
-
-function assignmentTargetIdentifier(node) {
-  return {
-    type: 'ati',
-    node,
-  };
-}
-
-function bindingIdentifier(node) {
-  return {
-    type: 'bi',
-    node,
-  };
-}
-
-function parameterExpressions(wrapped) {
-  return {
-    type: 'param exprs',
-    wrapped,
-  };
-}
+let parameterExpressions = wrapped => ({
+  type: 'param exprs',
+  wrapped,
+});
 
 export default class ScopeAnalyzer extends MonoidalReducer {
   constructor() {
@@ -44,7 +18,7 @@ export default class ScopeAnalyzer extends MonoidalReducer {
         return null;
       },
       concat(a, b) {
-        throw new RuntimeException('unreachable');
+        throw new Error('unreachable');
       },
     });
 
@@ -67,7 +41,6 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     return synthesize(reduce(new ScopeAnalyzer, program));
   }
 
-
   reduceArrowExpression(node, { params, body }) {
     return {
       type: 'arrow',
@@ -78,15 +51,27 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceAssignmentExpression(node, { binding, expression }) {
-    return assignment(node, false, binding, expression);
+    return {
+      type: 'assignment',
+      node,
+      compound: false,
+      binding,
+      init: expression,
+    }
   }
 
   reduceAssignmentTargetIdentifier(node) {
-    return assignmentTargetIdentifier(node);
+    return {
+      type: 'ati',
+      node,
+    };
   }
 
   reduceBindingIdentifier(node) {
-    return bindingIdentifier(node);
+    return {
+      type: 'bi',
+      node,
+    };
   }
 
   reduceBindingPropertyIdentifier(node, { binding, init }) {
@@ -162,7 +147,13 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   }
 
   reduceCompoundAssignmentExpression(node, { binding, expression }) {
-    return assignment(node, true, binding, expression);
+    return {
+      type: 'assignment',
+      node,
+      compound: false,
+      binding,
+      init: expression,
+    }
   }
 
   reduceComputedMemberExpression(node, { object, expression }) {
@@ -209,7 +200,6 @@ export default class ScopeAnalyzer extends MonoidalReducer {
   reduceFormalParameters(node, { items, rest }) {
     return {
       type: 'parameters',
-      node,
       items,
       rest,
     };
@@ -249,8 +239,13 @@ export default class ScopeAnalyzer extends MonoidalReducer {
 
   reduceGetter(node, { name, body }) {
     return this.append(name, {
-      type: 'getter',
+      type: 'method',
       node,
+      params: {
+        type: 'parameters',
+        items: [],
+        rest: null,
+      },
       body,
     });
   }
@@ -314,12 +309,15 @@ export default class ScopeAnalyzer extends MonoidalReducer {
     };
   }
 
-  // TODO getter/setter tests, with computed property names
   reduceSetter(node, { name, param, body }) {
     return this.append(name, {
-      type: 'setter',
+      type: 'method',
       node,
-      param,
+      params: {
+        type: 'parameters',
+        items: [param],
+        rest: null,
+      },
       body,
     });
   }
@@ -515,6 +513,7 @@ function getBlockDecls(item, isTopLevel, out) {
     case 'for':
     case 'assignment':
     case 'delete':
+    case 'method':
     case 'class expression':
     case 'function expression':
     case 'if':
@@ -619,6 +618,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
     case 'import':
     case 'arrow':
     case 'eval':
+    case 'method':
     case 'function expression':
     case 'class expression':
     case 'delete':
@@ -1096,6 +1096,7 @@ function synthesize(summary) {
   function visitScope(scope) {
     let variables = scope.variables;
     scope.variables = scope.variableMap;
+    delete scope.variableMap;
 
     scope.variableList = [];
     for (let x of variables) {

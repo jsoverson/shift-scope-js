@@ -1920,6 +1920,36 @@ suite('unit', () => {
     );
   });
 
+  test('method', () => {
+    checkScopeAnnotation(`
+      ({
+        get [x/* reads x#0 */](){
+          var x/* declares x#1 */;
+        }
+      })
+      `
+    );
+
+    checkScopeAnnotation(`
+      ({
+        set [x/* reads x#0 */](x/* declares x#1 */){
+          var x/* declares x#1 */;
+        }
+      })
+      `
+    );
+
+    checkScopeAnnotation(`
+      ({
+        [x/* reads x#0 */](x/* declares x#1 */){
+          var x/* declares x#1 */;
+        }
+      })
+      `
+    );
+  });
+
+
   test('delete', () => {
     checkScopeAnnotation(`
       delete x/* deletes x#0 */;
