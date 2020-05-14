@@ -640,7 +640,9 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
       break;
     }
     case 'switch': {
+      forbiddenB33DeclsStack.push(item.decls);
       item.cases.forEach(c => getVarDecls(c, strict, forbiddenB33DeclsStack, false, outVar, outB33));
+      forbiddenB33DeclsStack.pop();
       break;
     }
     case 'param exprs':
