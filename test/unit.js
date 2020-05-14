@@ -1870,11 +1870,54 @@ suite('unit', () => {
         case f/* reads f#0 */: {
           function f/* declares f#0, f#2 */(){}
         }
+      }`
+    );
+
+    checkScopeAnnotation(`
+      switch (f/* reads f#0 */) {
+        case 1: {
+          function f/* declares f#0, f#1 */(){}
+        }
         default: {
+          function f/* declares f#0, f#2 */(){}
+        }
+        case f/* reads f#0 */: {
           function f/* declares f#0, f#3 */(){}
         }
       }`
     );
+
+    checkScopeAnnotation(`
+      switch (f/* reads f#0 */) {
+        case 1:
+          function f/* declares f#1 */(){}
+        case f/* reads f#1 */:
+          function f/* declares f#1 */(){}
+      }`
+    );
+
+    checkScopeAnnotation(`
+      switch (f/* reads f#0 */) {
+        case 1:
+          function f/* declares f#1 */(){}
+        default:
+          function f/* declares f#1 */(){}
+        case f/* reads f#1 */:
+          function f/* declares f#1 */(){}
+      }`
+    );
+
+    checkScopeAnnotation(`
+      {
+        {
+          function f/* declares f#2 */() {}
+        }
+        function f/* declares f#0, f#1 */() {}
+      }
+      f/* reads f#0 */;
+      `
+    );
+
 
     checkScopeAnnotation(`
       {
@@ -1892,17 +1935,90 @@ suite('unit', () => {
       f/* reads f#0 */;
       `
     );
-  });
 
-  test('binding property', () => {
-    checkScopeAnnotation(`/* Scope (Global) declaring a#0 *//* Scope (Script) */
-      !/* Scope (Parameters) declaring arguments#0, b#0 *//* Scope (Function) declaring a#1 */function (
-        /* Scope (ParameterExpression) */{ [a/* reads a#0 */]: b/* declares b#0 */ }/* end scope */
-       ){
-         var a/* declares a#1 */;
-       }/* end scope *//* end scope */
-      /* end scope *//* end scope */`,
-      { skipUnambiguous: false, skipScopes: false }
+    checkScopeAnnotation(`
+      {
+        l1: l2: l3: function f/* declares f#0, f#1 */() {}
+      }
+      f/* reads f#0 */;
+      `
+    );
+
+    checkScopeAnnotation(`
+      {
+        function f/* declares f#0, f#1 */() {}
+        async function g/* declares g#0 */(){}
+        function* h/* declares h#0 */(){}
+      }
+
+      switch (0) {
+        case 0:
+          function f/* declares f#0, f#2 */() {}
+          async function g/* declares g#1 */(){}
+          function* h/* declares h#1 */(){}
+      }
+
+      switch (0) {
+        default:
+          function f/* declares f#0, f#3 */() {}
+          async function g/* declares g#2 */(){}
+          function* h/* declares h#2 */(){}
+        case 0:
+          function f2/* declares f2#0, f2#1 */() {}
+          async function g/* declares g#2 */(){}
+          function* h/* declares h#2 */(){}
+      }
+
+      if (0) function f/* declares f#0, f#4 */() {}
+      else function f/* declares f#0, f#5 */() {}
+
+      `
+    );
+
+    // hoisted functions are not visible in parameter lists
+    checkScopeAnnotation(`
+      !function (a/* declares a#0 */ = f/* reads f#0 */) {
+        {
+          function f/* declares f#1, f#2 */() {
+          }
+        }
+      };
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      !function (f/* declares f#0 */) {
+        {
+          function f/* declares f#1 */() {
+          }
+        }
+        f/* reads f#0 */;
+      };
+      `,
+      { skipUnambiguous: false }
+    );
+
+    checkScopeAnnotation(`
+      !function () {
+        {
+          function f/* declares f#0, f#1 */() {
+          }
+        }
+        f/* reads f#0 */;
+      };
+      `,
+      { skipUnambiguous: false }
+    );
+
+    // cannot hoist if there are duplicates
+    checkScopeAnnotation(`
+      {
+        l: function f/* declares f#0 */() {}
+        function f/* declares f#0 */() {}
+      }
+      `,
+      { skipUnambiguous: false }
     );
   });
 
@@ -1929,117 +2045,6 @@ suite('unit', () => {
       }
       x/* reads x#0 */;
       `
-    );
-  });
-
-  test('method', () => {
-    checkScopeAnnotation(`
-      ({
-        get [x/* reads x#0 */](){
-          var x/* declares x#1 */;
-        }
-      })
-      `
-    );
-
-    checkScopeAnnotation(`
-      ({
-        set [x/* reads x#0 */](x/* declares x#1 */){
-          var x/* declares x#1 */;
-        }
-      })
-      `
-    );
-
-    checkScopeAnnotation(`
-      ({
-        [x/* reads x#0 */](x/* declares x#1 */){
-          var x/* declares x#1 */;
-        }
-      })
-      `
-    );
-  });
-
-  test('for in/of', () => {
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (a/* writes a#0 */ in a/* reads a#0 */) a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false }
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (a/* writes a#0 */ of a/* reads a#0 */) a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false }
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (var a/* declares a#0; writes a#0 */ in a/* reads a#0 */) a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false }
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (var a/* declares a#0; writes a#0 */ of a/* reads a#0 */) a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false }
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (let a/* declares a#1; writes a#1 */ in a/* reads a#1 */) a/* reads a#1 */;
-      `,
-      { skipUnambiguous: false }
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */;
-      for (let a/* declares a#1; writes a#1 */ of a/* reads a#1 */) a/* reads a#1 */;
-      `,
-      { skipUnambiguous: false }
-    );
-  });
-
-  test('compound assigment', () => {
-    checkScopeAnnotation(`
-      a/* reads a#0; writes a#0 */ += a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false },
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */.b += a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false },
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */[a/* reads a#0 */] += a/* reads a#0 */;
-      `,
-      { skipUnambiguous: false },
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0; writes a#0 */++;
-      `,
-      { skipUnambiguous: false },
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */.b++;
-      `,
-      { skipUnambiguous: false },
-    );
-
-    checkScopeAnnotation(`
-      a/* reads a#0 */[a/* reads a#0 */]++;
-      `,
-      { skipUnambiguous: false },
     );
   });
 
