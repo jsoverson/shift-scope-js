@@ -29,11 +29,12 @@
     "babel-eslint": "7.2.3",
     "babel-preset-env": "1.6.0",
     "babel-register": "6.26.0",
+    "chai": "^4.2.0",
     "eslint": "4.6.1",
     "mocha": "2.3.4",
-    "shift-parser": "6.0.0",
     "shift-codegen": "5.0.4",
-    "shift-fuzzer": "1.0.2"
+    "shift-fuzzer": "1.0.2",
+    "shift-parser": "6.0.0"
   },
   "keywords": [
     "Shift",

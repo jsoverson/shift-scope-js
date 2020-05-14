@@ -404,6 +404,9 @@ function isStrict(node) {
 }
 
 function getAssignmentTargetIdentifiers(item, out) {
+  if (item == null) {
+    return;
+  }
   switch (item.type) {
     case 'ati': {
       out.push(item.node);
@@ -415,6 +418,11 @@ function getAssignmentTargetIdentifiers(item, out) {
       });
       break;
     }
+    case 'param exprs': {
+      getAssignmentTargetIdentifiers(item.wrapped, out);
+      break;
+    }
+    case 'function expression':
     case 'variable declaration':
     case 'ie': {
       break;
@@ -429,6 +437,9 @@ function getAssignmentTargetIdentifiers(item, out) {
 // TODO reconsider out parameter
 // returns `true` if there are parameter expresisons
 function getBindings(item, out) {
+  if (item == null) {
+    return false;
+  }
   switch (item.type) {
     case 'union': {
       return item.values.some(v => getBindings(v, out));
@@ -519,6 +530,7 @@ function getBlockDecls(item, isTopLevel, out) {
     case 'for-in/of':
     case 'for':
     case 'assignment':
+    case 'update':
     case 'delete':
     case 'method':
     case 'class expression':
@@ -629,6 +641,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
     case 'method':
     case 'function expression':
     case 'class expression':
+    case 'update':
     case 'delete':
     case 'assignment':
     case 'ati':
@@ -691,8 +704,6 @@ function synthesize(summary) {
       scopeStack[0].variableMap.set(name, variable);
       namesInScope.set(name, [{ scope: scopeStack[0], variable }]);
 
-      // we consider references to undeclared global variables to pass through the global scope
-      scopeStack[0].through.set(name, ref);
     }
 
     let stack = namesInScope.get(name);
@@ -700,6 +711,11 @@ function synthesize(summary) {
     variable.references.push(ref);
     for (let i = scopeStack.length - 1; scopeStack[i] !== scope; --i) {
       scopeStack[i].through.set(name, ref);
+    }
+
+    // we consider references to undeclared global variables to pass through the global scope
+    if (scope === scopeStack[0] && variable.declarations.length === 0) {
+      scopeStack[0].through.set(name, ref);
     }
   }
 
@@ -722,7 +738,7 @@ function synthesize(summary) {
     }
   }
 
-  function func(node, paramsItem, body) {
+  function func(node, paramNodes, paramsItem, body) {
     let oldStrict = strict;
     strict = strict || (node.body.type === 'FunctionBody' && isStrict(node.body));
 
@@ -746,20 +762,20 @@ function synthesize(summary) {
         declare(null);
       }
       params.forEach(declare);
-      for (let i = 0; i < node.params.items.length; ++i) {
+      for (let i = 0; i < paramNodes.items.length; ++i) {
         if (paramExprs[i]) {
           // each parameter with expressions gets its own scope
           // fortunately they have no declarations
-          enterScope(ScopeType.PARAMETER_EXPRESSION, node.params.items[i]);
+          enterScope(ScopeType.PARAMETER_EXPRESSION, paramNodes.items[i]);
           visit(paramsItem.items[i]);
           exitScope();
         } else {
           visit(paramsItem.items[i]);
         }
       }
-      if (node.params.rest != null) {
+      if (paramNodes.rest != null) {
         if (restHasParamExprs) {
-          enterScope(ScopeType.PARAMETER_EXPRESSION, node.params.rest);
+          enterScope(ScopeType.PARAMETER_EXPRESSION, paramNodes.rest);
           visit(paramsItem.rest);
           exitScope();
         } else {
@@ -922,7 +938,7 @@ function synthesize(summary) {
         break;
       }
       case 'function declaration': {
-        func(item.node, item.params, item.body);
+        func(item.node, item.node.params, item.params, item.body);
         break;
       }
       case 'function expression': {
@@ -931,21 +947,30 @@ function synthesize(summary) {
 
           declare(new Declaration(item.node.name, DeclarationType.FUNCTION_NAME));
 
-          func(item.node, item.params, item.body);
+          func(item.node, item.node.params, item.params, item.body);
 
           exitScope();
         } else {
-          func(item.node, item.params, item.body);
+          func(item.node, item.node.params, item.params, item.body);
         }
         break;
       }
       case 'arrow': {
-        func(item.node, item.params, item.body, false);
+        func(item.node, item.node.params, item.params, item.body, false);
         break;
       }
       // TODO methods, getters, setters don't need their own type I guess
       case 'method': {
-        func(item.node, item.params, item.body, true);
+        if (item.params == null) {
+          console.log(item.node);
+          process.exit(0);
+        }
+        let paramNodes = item.node.type === 'Method'
+          ? item.node.params
+          : item.node.type === 'Setter'
+            ? { items: [item.node.param], rest: null }
+            : { items: [], rest: null };
+        func(item.node, paramNodes, item.params, item.body, true);
         break;
       }
       case 'with': {
@@ -994,15 +1019,17 @@ function synthesize(summary) {
 
         // TODO be less dumb about this
         // ideally do it earlier
-        let bindings = [];
-        if (item.left.type === 'variable declaration') {
-          item.left.declarators.forEach(d => getBindings(d.binding, bindings));
-        } else {
-          getAssignmentTargetIdentifiers(item.left, bindings);
+        if (item.left != null) {
+          let bindings = [];
+          if (item.left.type === 'variable declaration') {
+            item.left.declarators.forEach(d => getBindings(d.binding, bindings));
+          } else {
+            getAssignmentTargetIdentifiers(item.left, bindings);
+          }
+          bindings.forEach(b => {
+            refer(Accessibility.WRITE, b);
+          });
         }
-        bindings.forEach(b => {
-          refer(Accessibility.WRITE, b);
-        });
 
         visit(item.left);
         visit(item.right);
@@ -1085,7 +1112,7 @@ function synthesize(summary) {
         if (item.node.operand.type === 'AssignmentTargetIdentifier') {
           refer(Accessibility.READWRITE, item.node.operand);
         } else {
-          visit(item.node.operand);
+          visit(item.operand);
         }
         break;
       }
