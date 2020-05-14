@@ -647,6 +647,7 @@ function getVarDecls(item, strict, forbiddenB33DeclsStack, isTopLevel, outVar, o
 class Scope {
   constructor(o) {
     o.dynamic = o.isDynamic;
+    o.variableMap = new Map;
     return o;
   }
 }
@@ -660,24 +661,24 @@ function synthesize(summary) {
   let scopeStack = [];
 
   function enterScope(type, node) {
-    let variables = [];
-
     let scope = new Scope({
       type,
       astNode: node,
       children: [],
-      variables,
+      variables: [],
       isDynamic: type === ScopeType.WITH, // TODO
       // TODO contemplate `through`
       through: new MultiMap(),
     });
     scopeStack[scopeStack.length - 1].children.push(scope);
     scopeStack.push(scope);
-    return scope;
   }
 
   function exitScope() {
-    scopeStack.pop();
+    let scope = scopeStack.pop();
+    scope.variables.forEach(v => {
+      namesInScope.get(v.name).pop();
+    });
   }
 
   function refer(accessibility, node) {
@@ -689,8 +690,8 @@ function synthesize(summary) {
       // make a new global
       let variable = new Variable(name, [], []);
       scopeStack[0].variables.push(variable);
+      scopeStack[0].variableMap.set(name, variable);
       namesInScope.set(name, [{ scope: scopeStack[0], variable }]);
-
 
       // TODO this is kind of dumb
       // we consider references to global variables to pass through the global scope
@@ -705,36 +706,34 @@ function synthesize(summary) {
     }
   }
 
-  // TODO declare can just manipulate the top of the scope stack
-  function declare(scope, decls, includeArguments = false) {
+  function declare(decls, includeArguments = false) {
+    let scope = scopeStack[scopeStack.length - 1];
     // string => variable
-    let declaredInThisScope = new Map;
     decls.forEach(d => {
       let name = d.node.name;
-      if (declaredInThisScope.has(name)) {
-        declaredInThisScope.get(name).declarations.push(d);
+      if (scope.variableMap.has(name)) {
+        scope.variableMap.get(name).declarations.push(d);
       } else {
         let variable = new Variable(name, [], [d]);
-        declaredInThisScope.set(name, variable);
         scope.variables.push(variable);
+        scope.variableMap.set(name, variable);
         if (!namesInScope.has(name)) {
           namesInScope.set(name, []);
         }
         namesInScope.get(name).push({ scope, variable });
       }
     });
-    if (includeArguments && !declaredInThisScope.has('arguments')) {
+    if (includeArguments && !scope.variableMap.has('arguments')) {
       let variable = new Variable('arguments', [], []);
-      declaredInThisScope.set('arguments', variable);
       scope.variables.push(variable);
+      scope.variableMap.set('arguments', variable);
       if (!namesInScope.has('arguments')) {
         namesInScope.set('arguments', []);
       }
       namesInScope.get('arguments').push({ scope, variable });
     }
-    // todo maybe just return keys
-    return declaredInThisScope;
   }
+
 
   function func(node, paramsItem, body) {
     let oldStrict = strict;
@@ -755,9 +754,8 @@ function synthesize(summary) {
 
     let paramScope = hasParameterExpressions ? enterScope(ScopeType.PARAMETERS, node) : null;
 
-    let declaredInParamsScope = hasParameterExpressions ? declare(paramScope, params, !arrow) : null;
-
     if (hasParameterExpressions) {
+      declare(params, !arrow);
       for (let i = 0; i < node.params.items.length; ++i) {
         if (paramExprs[i]) {
           // each parameter with expressions gets its own scope
@@ -782,13 +780,9 @@ function synthesize(summary) {
 
     let functionScope = enterScope(arrow ? ScopeType.ARROW_FUNCTION : ScopeType.FUNCTION, node);
 
-    let declaredInFunctionScope;
-
     if (arrow && node.body.type !== 'FunctionBody') {
-      if (hasParameterExpressions) {
-        declaredInFunctionScope = new Map;
-      } else {
-        declaredInFunctionScope = declare(functionScope, params);
+      if (!hasParameterExpressions) {
+        declare(params);
       }
     } else {
       let vs = [];
@@ -802,22 +796,16 @@ function synthesize(summary) {
       if (!hasParameterExpressions) {
         bodyDecls = [...params, ...bodyDecls];
       }
-      declaredInFunctionScope = declare(functionScope, bodyDecls, !hasParameterExpressions);
+      declare(bodyDecls, !hasParameterExpressions);
     }
 
     visit(body);
 
 
     exitScope();
-    for (let name of declaredInFunctionScope.keys()) {
-      namesInScope.get(name).pop();
-    }
 
     if (hasParameterExpressions) {
       exitScope();
-      for (let name of declaredInParamsScope.keys()) {
-        namesInScope.get(name).pop();
-      }
     }
     strict = oldStrict;
   }
@@ -830,45 +818,32 @@ function synthesize(summary) {
       case 'script': {
         strict = isStrict(item.node);
 
-        let vs = [];
-        let b33vs = [];
-        item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));        
-
         // TODO b33vs probably doesn't need to be its own array
-        // TODO figure out a better way of preventing top-level functions from being B33'd
-        // b33vs = b33vs.filter(n => !item.node.statements.some(s => s.type === 'FunctionDeclaration' && s.name === n));
 
         // top-level lexical declarations in scripts are not globals, so first create the global scope for the var-scoped things
         {
-          let variables = [];
-
           let scope = new Scope({
             type: ScopeType.GLOBAL,
             astNode: item.node,
             children: [],
-            variables,
+            variables: [],
             isDynamic: true, // the global scope is always dynamic
             // TODO contemplate `through`
             through: new MultiMap(),
           });
           scopeStack.push(scope);
 
-          vs.concat(b33vs).forEach(d => {
-            let name = d.node.name;
-            if (namesInScope.has(name)) {
-              namesInScope.get(name)[0].variable.declarations.push(d);
-            } else {
-              let variable = new Variable(name, [], [d]);
-              variables.push(variable);
-              namesInScope.set(name, [{ scope, variable }]);
-            }
-          });
+          let vs = [];
+          let b33vs = [];
+          item.statements.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, b33vs));        
+
+          declare(vs.concat(b33vs));
         }
 
         {
-          let scope = enterScope(ScopeType.SCRIPT, item.node);
+          enterScope(ScopeType.SCRIPT, item.node);
 
-          declare(scope, item.decls);
+          declare(item.decls);
         }
 
         item.statements.forEach(visit);
@@ -891,13 +866,13 @@ function synthesize(summary) {
         });
         scopeStack.push(globalScope);
 
-        let scope = enterScope(ScopeType.MODULE, item.node);
+        enterScope(ScopeType.MODULE, item.node);
 
         let vs = [];
         item.items.forEach(s => getVarDecls(s, strict, [item.decls], true, vs, []));
 
         let decls = [...item.decls, ...vs];
-        declare(scope, decls);
+        declare(decls);
 
         item.items.forEach(visit);
 
@@ -924,15 +899,12 @@ function synthesize(summary) {
         break;
       }
       case 'block': {
-        let scope = enterScope(ScopeType.BLOCK, item.node);
+        enterScope(ScopeType.BLOCK, item.node);
 
-        let declaredInThisScope = declare(scope, item.decls);
+        declare(item.decls);
 
         item.statements.forEach(visit);
 
-        for (let name of declaredInThisScope.keys()) {
-          namesInScope.get(name).pop();
-        }
         exitScope();
         break;
       }
@@ -941,7 +913,7 @@ function synthesize(summary) {
         let oldStrict = strict;
         strict = true;
 
-        let scope = enterScope(ScopeType.CLASS_NAME, item.node);
+        enterScope(ScopeType.CLASS_NAME, item.node);
 
         let hasName =
           item.type == 'class expression'
@@ -949,15 +921,11 @@ function synthesize(summary) {
             : item.node.name.name !== '*default*';
 
         if (hasName) {
-          declare(scope, [new Declaration(item.node.name, DeclarationType.CLASS_NAME)]);
+          declare([new Declaration(item.node.name, DeclarationType.CLASS_NAME)]);
         }
 
         visit(item.super);
         item.elements.forEach(visit);
-
-        if (hasName) {
-          namesInScope.get(item.node.name.name).pop();          
-        }
 
         exitScope();
 
@@ -970,13 +938,11 @@ function synthesize(summary) {
       }
       case 'function expression': {
         if (item.node.name != null) {
-          let scope = enterScope(ScopeType.FUNCTION_NAME, item.node);
+          enterScope(ScopeType.FUNCTION_NAME, item.node);
 
-          declare(scope, [new Declaration(item.node.name, DeclarationType.FUNCTION_NAME)]);
+          declare([new Declaration(item.node.name, DeclarationType.FUNCTION_NAME)]);
 
           func(item.node, item.params, item.body);
-
-          namesInScope.get(item.node.name.name).pop();
 
           exitScope();
         } else {
@@ -1003,36 +969,30 @@ function synthesize(summary) {
         break;        
       }
       case 'catch': {
-        let scope = enterScope(ScopeType.CATCH, item.node);
+        enterScope(ScopeType.CATCH, item.node);
 
         // TODO move up
         let bindings = [];
         getBindings(item.binding, bindings);
 
-        let declaredInThisScope = declare(scope, bindings.map(b => new Declaration(b, DeclarationType.CATCH_PARAMETER)));
+        declare(bindings.map(b => new Declaration(b, DeclarationType.CATCH_PARAMETER)));
 
         visit(item.binding);
         visit(item.body);
 
-        for (let name of declaredInThisScope.keys()) {
-          namesInScope.get(name).pop();
-        }
         exitScope();
         break;
       }
       case 'for': {
-        let scope = enterScope(ScopeType.BLOCK, item.node);
+        enterScope(ScopeType.BLOCK, item.node);
 
-        let declaredInThisScope = declare(scope, item.decls);
+        declare(item.decls);
 
         visit(item.init);
         visit(item.test);
         visit(item.update);
         visit(item.body);
 
-        for (let name of declaredInThisScope.keys()) {
-          namesInScope.get(name).pop();
-        }
         exitScope();
 
         break;
@@ -1040,14 +1000,11 @@ function synthesize(summary) {
       case 'switch': {
         visit(item.discriminant);
 
-        let scope = enterScope(ScopeType.BLOCK, item.node);
-        let declaredInThisScope = declare(scope, item.decls);
+        enterScope(ScopeType.BLOCK, item.node);
+        declare(item.decls);
 
         item.cases.forEach(visit);
 
-        for (let name of declaredInThisScope.keys()) {
-          namesInScope.get(name).pop();
-        }
         exitScope();
 
         break;
@@ -1056,28 +1013,22 @@ function synthesize(summary) {
         visit(item.test);
         // These "blocks" are synthetic; see https://tc39.es/ecma262/#sec-functiondeclarations-in-ifstatement-statement-clauses
         if (item.node.consequent.type === 'FunctionDeclaration') {
-          let scope = enterScope(ScopeType.BLOCK, item.node.consequent);
-          let declaredInThisScope = declare(scope, [new Declaration(item.node.consequent.name, DeclarationType.FUNCTION_DECLARATION)]);
+          enterScope(ScopeType.BLOCK, item.node.consequent);
+          declare([new Declaration(item.node.consequent.name, DeclarationType.FUNCTION_DECLARATION)]);
 
           visit(item.consequent);
 
-          for (let name of declaredInThisScope.keys()) {
-            namesInScope.get(name).pop();
-          }
           exitScope();
         } else {
           visit(item.consequent);
         }
         if (item.alternate != null) {
           if (item.node.alternate.type === 'FunctionDeclaration') {
-            let scope = enterScope(ScopeType.BLOCK, item.node.alternate);
-            let declaredInThisScope = declare(scope, [new Declaration(item.node.alternate.name, DeclarationType.FUNCTION_DECLARATION)]);
+            enterScope(ScopeType.BLOCK, item.node.alternate);
+            declare([new Declaration(item.node.alternate.name, DeclarationType.FUNCTION_DECLARATION)]);
 
             visit(item.alternate);
 
-            for (let name of declaredInThisScope.keys()) {
-              namesInScope.get(name).pop();
-            }
             exitScope();
           } else {
             visit(item.alternate);
@@ -1163,8 +1114,8 @@ function synthesize(summary) {
   // ugh
   function visitScope(scope) {
     let variables = scope.variables;
-    scope.variables = new Map;
-    variables.forEach(v => scope.variables.set(v.name, v));
+    scope.variables = scope.variableMap;
+    // variables.forEach(v => scope.variables.set(v.name, v));
 
     scope.variableList = [];
     for (let x of variables) {
