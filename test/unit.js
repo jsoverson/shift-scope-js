@@ -2005,7 +2005,7 @@ suite('unit', () => {
     );
   });
 
-  test.only('compound assigment', () => {
+  test('compound assigment', () => {
     checkScopeAnnotation(`
       a/* reads a#0; writes a#0 */ += a/* reads a#0 */;
       `,
